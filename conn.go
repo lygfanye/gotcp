@@ -180,9 +180,6 @@ func (c *Conn) Do() {
 		c.srv.config.AfterConnect(c)
 	}
 
-	//go func() {
-	//	c.handleLoop()
-	//}()
 	asyncDo(c.handleLoop, c.srv.wg)
 	asyncDo(c.readLoop, c.srv.wg)
 	asyncDo(c.writeLoop, c.srv.wg)

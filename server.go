@@ -4,6 +4,7 @@ import (
 	"sync"
 	"log"
 	"net"
+	"fmt"
 )
 
 type ServerConfig struct {
@@ -69,12 +70,18 @@ func (s *Server) ConnSize() (int) {
 }
 
 func (s *Server) Start(l *net.TCPListener) {
+	s.wg.Add(1)
+	defer func() {
+		s.wg.Done()
+	}()
+
 	for {
 		select {
 		case <-s.stopChan:
 			return
 		default:
 		}
+
 
 		connection, err := l.AcceptTCP()
 		if err != nil {
@@ -93,9 +100,8 @@ func (s *Server) Start(l *net.TCPListener) {
 func (s *Server) Stop(l *net.TCPListener) {
 	close(s.stopChan)
 	log.Println("wati conn process done....")
+	l.Close()
 	s.wg.Wait()
-	e :=l.Close()
-	log.Println("lisstener is closed....", e)
 	log.Println("server is stopped....")
 }
 
