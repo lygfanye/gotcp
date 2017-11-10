@@ -1,7 +1,8 @@
 gotcp
 ================
 
-A Go package for quickly building tcp servers
+A Go package for quickly building tcp servers base on [gansidui/gotcp](https://github.com/gansidui/gotcp/tree/master/examples/echo)
+
 
 
 Usage
@@ -10,16 +11,13 @@ Usage
 ### Install
 
 ~~~
-go get github.com/gansidui/gotcp
+go get github.com/lygfanye/gotcp
 ~~~
 
 
 ### Examples
 
-* [echo](https://github.com/gansidui/gotcp/tree/master/examples/echo)
-* [telnet](https://github.com/gansidui/gotcp/tree/master/examples/telnet)
+* [echo](https://github.com/lygfanye/gotcp/tree/master/examples/echo)
+* [telnet](https://github.com/lygfanye/gotcp/tree/master/examples/telnet)
 
-Document
-================
 
-[Doc](http://godoc.org/github.com/gansidui/gotcp)

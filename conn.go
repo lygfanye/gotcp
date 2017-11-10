@@ -4,51 +4,39 @@ import (
 	"errors"
 	"net"
 	"sync"
-	"sync/atomic"
 	"time"
+	"fmt"
+	"log"
 )
 
 // Error type
 var (
 	ErrConnClosing   = errors.New("use of closed network connection")
 	ErrWriteBlocking = errors.New("write packet was blocking")
+	ErrWriteTimeout  = errors.New("write packet timeout")
 	ErrReadBlocking  = errors.New("read packet was blocking")
 )
 
-// Conn exposes a set of callbacks for the various events that occur on a connection
 type Conn struct {
-	srv               *Server
-	conn              *net.TCPConn  // the raw connection
-	extraData         interface{}   // to save extra data
-	closeOnce         sync.Once     // close the conn, once, per instance
-	closeFlag         int32         // close flag
-	closeChan         chan struct{} // close chanel
-	packetSendChan    chan Packet   // packet send chanel
-	packetReceiveChan chan Packet   // packeet receive chanel
+	id          string
+	srv         *Server
+	extraData   interface{}
+	closeOnce   sync.Once
+	rawConn     *net.TCPConn
+	receiveChan chan Packet
+	sendChan    chan Packet
+	heart       int64
+	closeChan   chan struct{}
 }
 
-// ConnCallback is an interface of methods that are used as callbacks on a connection
-type ConnCallback interface {
-	// OnConnect is called when the connection was accepted,
-	// If the return value of false is closed
-	OnConnect(*Conn) bool
-
-	// OnMessage is called when the connection receives a packet,
-	// If the return value of false is closed
-	OnMessage(*Conn, Packet) bool
-
-	// OnClose is called when the connection closed
-	OnClose(*Conn)
-}
-
-// newConn returns a wrapper of raw conn
-func newConn(conn *net.TCPConn, srv *Server) *Conn {
+func newConn(rawConn *net.TCPConn, srv *Server) *Conn {
 	return &Conn{
-		srv:               srv,
-		conn:              conn,
-		closeChan:         make(chan struct{}),
-		packetSendChan:    make(chan Packet, srv.config.PacketSendChanLimit),
-		packetReceiveChan: make(chan Packet, srv.config.PacketReceiveChanLimit),
+		srv:         srv,
+		rawConn:     rawConn,
+		receiveChan: make(chan Packet, srv.config.ReceiveChanBuf),
+		sendChan:    make(chan Packet, srv.config.SendChanBuf),
+		closeChan:   make(chan struct{}),
+		heart:       time.Now().Unix(),
 	}
 }
 
@@ -62,148 +50,182 @@ func (c *Conn) PutExtraData(data interface{}) {
 	c.extraData = data
 }
 
-// GetRawConn returns the raw net.TCPConn from the Conn
 func (c *Conn) GetRawConn() *net.TCPConn {
-	return c.conn
+	return c.rawConn
 }
 
-// Close closes the connection
-func (c *Conn) Close() {
-	c.closeOnce.Do(func() {
-		atomic.StoreInt32(&c.closeFlag, 1)
-		close(c.closeChan)
-		close(c.packetSendChan)
-		close(c.packetReceiveChan)
-		c.conn.Close()
-		c.srv.callback.OnClose(c)
-	})
+func (c *Conn) SetHeartBeat(heart int64) {
+	c.heart = heart
 }
 
-// IsClosed indicates whether or not the connection is closed
-func (c *Conn) IsClosed() bool {
-	return atomic.LoadInt32(&c.closeFlag) == 1
+func (c *Conn) GetHeartBeat() int64 {
+	return c.heart
 }
 
-// AsyncWritePacket async writes a packet, this method will never block
-func (c *Conn) AsyncWritePacket(p Packet, timeout time.Duration) (err error) {
-	if c.IsClosed() {
-		return ErrConnClosing
-	}
-
-	defer func() {
-		if e := recover(); e != nil {
-			err = ErrConnClosing
-		}
-	}()
-
+func (c *Conn) AsyncWritePacket(p Packet, timeout time.Duration) error {
 	if timeout == 0 {
 		select {
-		case c.packetSendChan <- p:
+		case c.sendChan <- p:
 			return nil
-
 		default:
 			return ErrWriteBlocking
 		}
-
 	} else {
 		select {
-		case c.packetSendChan <- p:
+		case c.sendChan <- p:
 			return nil
-
+		case <-time.After(timeout):
+			return ErrWriteTimeout
 		case <-c.closeChan:
 			return ErrConnClosing
-
-		case <-time.After(timeout):
-			return ErrWriteBlocking
 		}
 	}
-}
-
-// Do it
-func (c *Conn) Do() {
-	if !c.srv.callback.OnConnect(c) {
-		return
-	}
-
-	asyncDo(c.handleLoop, c.srv.waitGroup)
-	asyncDo(c.readLoop, c.srv.waitGroup)
-	asyncDo(c.writeLoop, c.srv.waitGroup)
 }
 
 func (c *Conn) readLoop() {
 	defer func() {
-		recover()
+		if err := recover(); err != nil {
+			log.Println("ReadLoop Error", err)
+		}
 		c.Close()
 	}()
 
 	for {
 		select {
-		case <-c.srv.exitChan:
+		case <-c.srv.stopChan:
+			log.Println("Tcp server is stop, ReadLoop exit")
 			return
-
 		case <-c.closeChan:
+			log.Println("client conn is closed, ReadLoop exit")
 			return
-
 		default:
 		}
 
-		p, err := c.srv.protocol.ReadPacket(c.conn)
+		c.SetHeartBeat(time.Now().Unix())
+		p, err := c.srv.protocol.ReadPacket(c.rawConn)
 		if err != nil {
+			log.Println("client conn is closed, ReadLoop exit")
 			return
 		}
+		c.receiveChan <- p
 
-		c.packetReceiveChan <- p
 	}
 }
 
 func (c *Conn) writeLoop() {
 	defer func() {
-		recover()
+		if err := recover(); err != nil {
+			log.Println("WriteLoop Error", err)
+		}
 		c.Close()
 	}()
 
 	for {
 		select {
-		case <-c.srv.exitChan:
+		case <-c.srv.stopChan:
+			log.Println("Tcp server is stop, WriteLoop exit")
 			return
-
 		case <-c.closeChan:
+			log.Println("client conn is closed, WriteLoop exit")
 			return
+		case p, ok := <-c.sendChan:
+			if ok {
+				if _, err := c.rawConn.Write(p.Pack()); err != nil {
+					log.Println("cloud not send packet to client, HandLoop exit")
+					return
+				}
 
-		case p := <-c.packetSendChan:
-			if c.IsClosed() {
-				return
+				if c.srv.config.AfterSend != nil {
+					c.srv.config.AfterSend(c, p)
+				}
 			}
-			if _, err := c.conn.Write(p.Serialize()); err != nil {
-				return
-			}
+
+		default:
 		}
 	}
 }
 
 func (c *Conn) handleLoop() {
 	defer func() {
-		recover()
+		if err := recover(); err != nil {
+			log.Println("HandleLoop Error", err)
+		}
 		c.Close()
 	}()
 
 	for {
 		select {
-		case <-c.srv.exitChan:
+		case <-c.srv.stopChan:
+			log.Println("Tcp server is stop, HandLoop exit")
 			return
-
 		case <-c.closeChan:
+			log.Println("client conn is closed, HandLoop exit")
 			return
-
-		case p := <-c.packetReceiveChan:
-			if c.IsClosed() {
-				return
+		case p, ok := <-c.receiveChan:
+			if ok {
+				log.Println("Receive Client Pakcet")
+				if c.srv.config.AfterReceive != nil {
+					c.srv.config.AfterReceive(c, p)
+				}
 			}
-			if !c.srv.callback.OnMessage(c, p) {
+		}
+
+	}
+}
+
+func (c *Conn) Do() {
+	fmt.Println("Conn begin process.....")
+
+	if c.srv.config.AfterConnect != nil {
+		c.srv.config.AfterConnect(c)
+	}
+
+	//go func() {
+	//	c.handleLoop()
+	//}()
+	asyncDo(c.handleLoop, c.srv.wg)
+	asyncDo(c.readLoop, c.srv.wg)
+	asyncDo(c.writeLoop, c.srv.wg)
+
+	if c.srv.config.EnableHeartBeating {
+		asyncDo(c.checkHeart, c.srv.wg)
+	}
+}
+
+func (c *Conn) checkHeart() {
+	tick := time.NewTicker(time.Duration(c.srv.config.HeartBeatingPeriod) * time.Second)
+	defer func() {
+		tick.Stop()
+	}()
+	for {
+		select {
+		case <-c.srv.stopChan:
+			log.Println("Tcp server is stop, checkHeart exit")
+			return
+		case <-c.closeChan:
+			log.Println("client conn is closed, checkHeart exit")
+			return
+		case <-tick.C:
+			diff := time.Now().Unix() - c.GetHeartBeat()
+			if diff > c.srv.config.HeartBeatingThreshold {
+				c.Close()
 				return
 			}
 		}
 	}
+}
+
+func (c *Conn) Close() {
+	c.closeOnce.Do(func() {
+		close(c.receiveChan)
+		close(c.sendChan)
+		close(c.closeChan)
+		c.srv.RemoveConn(c.id)
+		c.rawConn.Close()
+		if c.srv.config.AfterClose != nil {
+			c.srv.config.AfterClose(c)
+		}
+	})
 }
 
 func asyncDo(fn func(), wg *sync.WaitGroup) {

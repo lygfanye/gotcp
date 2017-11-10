@@ -6,11 +6,11 @@ import (
 	"net"
 	"time"
 
-	"github.com/gansidui/gotcp/examples/echo"
+	"github.com/lygfanye/gotcp/examples/echo"
 )
 
 func main() {
-	tcpAddr, err := net.ResolveTCPAddr("tcp4", "127.0.0.1:8989")
+	tcpAddr, err := net.ResolveTCPAddr("tcp4", "127.0.0.1:8980")
 	checkError(err)
 	conn, err := net.DialTCP("tcp", nil, tcpAddr)
 	checkError(err)
@@ -20,7 +20,7 @@ func main() {
 	// ping <--> pong
 	for i := 0; i < 3; i++ {
 		// write
-		conn.Write(echo.NewEchoPacket([]byte("hello"), false).Serialize())
+		conn.Write(echo.NewEchoPacket([]byte("hello"), false).Pack())
 
 		// read
 		p, err := echoProtocol.ReadPacket(conn)

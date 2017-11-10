@@ -6,14 +6,14 @@ import (
 	"io"
 	"net"
 
-	"github.com/gansidui/gotcp"
+	"github.com/lygfanye/gotcp"
 )
 
 type EchoPacket struct {
 	buff []byte
 }
 
-func (this *EchoPacket) Serialize() []byte {
+func (this *EchoPacket) Pack() []byte {
 	return this.buff
 }
 

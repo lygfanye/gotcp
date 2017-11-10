@@ -6,61 +6,57 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"runtime"
-	"syscall"
 	"time"
 
-	"github.com/gansidui/gotcp"
-	"github.com/gansidui/gotcp/examples/echo"
+	"github.com/lygfanye/gotcp"
+	"github.com/lygfanye/gotcp/examples/echo"
 )
 
-type Callback struct{}
-
-func (this *Callback) OnConnect(c *gotcp.Conn) bool {
+func AfterConnect(c *gotcp.Conn) {
 	addr := c.GetRawConn().RemoteAddr()
 	c.PutExtraData(addr)
 	fmt.Println("OnConnect:", addr)
-	return true
 }
 
-func (this *Callback) OnMessage(c *gotcp.Conn, p gotcp.Packet) bool {
+func AfterReceive(c *gotcp.Conn, p gotcp.Packet) {
 	echoPacket := p.(*echo.EchoPacket)
 	fmt.Printf("OnMessage:[%v] [%v]\n", echoPacket.GetLength(), string(echoPacket.GetBody()))
-	c.AsyncWritePacket(echo.NewEchoPacket(echoPacket.Serialize(), true), time.Second)
-	return true
+	c.AsyncWritePacket(echo.NewEchoPacket(echoPacket.Pack(), true), time.Second)
 }
 
-func (this *Callback) OnClose(c *gotcp.Conn) {
+func AfterClose(c *gotcp.Conn) {
 	fmt.Println("OnClose:", c.GetExtraData())
 }
 
 func main() {
-	runtime.GOMAXPROCS(runtime.NumCPU())
+
+	sc := &gotcp.ServerConfig{
+		SendChanBuf:    6,
+		ReceiveChanBuf: 6,
+		AfterConnect:   AfterConnect,
+		AfterReceive:   AfterReceive,
+		AfterClose:     AfterClose,
+	}
 
 	// creates a tcp listener
-	tcpAddr, err := net.ResolveTCPAddr("tcp4", ":8989")
+	tcpAddr, err := net.ResolveTCPAddr("tcp4", ":8980")
 	checkError(err)
 	listener, err := net.ListenTCP("tcp", tcpAddr)
 	checkError(err)
 
-	// creates a server
-	config := &gotcp.Config{
-		PacketSendChanLimit:    20,
-		PacketReceiveChanLimit: 20,
-	}
-	srv := gotcp.NewServer(config, &Callback{}, &echo.EchoProtocol{})
+	srv := gotcp.NewServer(sc, &echo.EchoProtocol{})
 
 	// starts service
-	go srv.Start(listener, time.Second)
+	go srv.Start(listener)
 	fmt.Println("listening:", listener.Addr())
 
 	// catchs system signal
 	chSig := make(chan os.Signal)
-	signal.Notify(chSig, syscall.SIGINT, syscall.SIGTERM)
-	fmt.Println("Signal: ", <-chSig)
-
+	signal.Notify(chSig, os.Interrupt)
+	<-chSig
 	// stops service
-	srv.Stop()
+	srv.Stop(listener)
+
 }
 
 func checkError(err error) {

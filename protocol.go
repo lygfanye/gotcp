@@ -5,7 +5,7 @@ import (
 )
 
 type Packet interface {
-	Serialize() []byte
+	Pack() []byte
 }
 
 type Protocol interface {

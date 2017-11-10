@@ -1,68 +1,107 @@
 package gotcp
 
 import (
-	"net"
 	"sync"
-	"time"
+	"log"
+	"net"
 )
 
-type Config struct {
-	PacketSendChanLimit    uint32 // the limit of packet send channel
-	PacketReceiveChanLimit uint32 // the limit of packet receive channel
+type ServerConfig struct {
+	EnableHeartBeating    bool  //启用心跳检测
+	HeartBeatingThreshold int64 //心跳过滤阀值
+	HeartBeatingPeriod    int64 //心跳检查周期
+	//EnableTcpKeepAlive bool //启用tcp keepalive机制
+
+	SendChanBuf    int
+	ReceiveChanBuf int
+
+	AfterConnect func(*Conn)
+	AfterReceive func(*Conn, Packet)
+	AfterSend    func(*Conn, Packet)
+	AfterClose   func(*Conn)
 }
 
 type Server struct {
-	config    *Config         // server configuration
-	callback  ConnCallback    // message callbacks in connection
-	protocol  Protocol        // customize packet protocol
-	exitChan  chan struct{}   // notify all goroutines to shutdown
-	waitGroup *sync.WaitGroup // wait for all goroutines
+	config   *ServerConfig
+	connSet  *sync.Map
+	wg       *sync.WaitGroup
+	protocol Protocol
+	stopChan chan struct{}
 }
 
-// NewServer creates a server
-func NewServer(config *Config, callback ConnCallback, protocol Protocol) *Server {
-	return &Server{
-		config:    config,
-		callback:  callback,
-		protocol:  protocol,
-		exitChan:  make(chan struct{}),
-		waitGroup: &sync.WaitGroup{},
+func NewServer(config *ServerConfig, protocol Protocol) *Server {
+	s := &Server{
+		connSet:  &sync.Map{},
+		config:   config,
+		wg:       &sync.WaitGroup{},
+		stopChan: make(chan struct{}),
+		protocol: protocol,
 	}
+
+	return s
 }
 
-// Start starts service
-func (s *Server) Start(listener *net.TCPListener, acceptTimeout time.Duration) {
-	s.waitGroup.Add(1)
-	defer func() {
-		listener.Close()
-		s.waitGroup.Done()
-	}()
+func (s *Server) Conn(id string) (*Conn, bool) {
+	if v, ok := s.connSet.Load(id); ok {
+		return v.(*Conn), ok
+	}
 
+	return nil, false
+}
+
+func (s *Server) StoreConn(id string, conn *Conn) {
+	s.connSet.Store(id, conn)
+}
+
+func (s *Server) RemoveConn(id string) {
+	s.connSet.Delete(id)
+}
+
+func (s *Server) ConnSize() (int) {
+	var counter int
+
+	s.connSet.Range(func(k, v interface{}) bool {
+		counter++
+		return true
+	})
+
+	return counter
+}
+
+func (s *Server) Start(l *net.TCPListener) {
 	for {
 		select {
-		case <-s.exitChan:
+		case <-s.stopChan:
 			return
-
 		default:
 		}
 
-		listener.SetDeadline(time.Now().Add(acceptTimeout))
-
-		conn, err := listener.AcceptTCP()
+		connection, err := l.AcceptTCP()
 		if err != nil {
 			continue
 		}
 
-		s.waitGroup.Add(1)
+		s.wg.Add(1)
 		go func() {
-			newConn(conn, s).Do()
-			s.waitGroup.Done()
+			newConn(connection, s).Do()
+			s.wg.Done()
 		}()
 	}
+
 }
 
-// Stop stops service
-func (s *Server) Stop() {
-	close(s.exitChan)
-	s.waitGroup.Wait()
+func (s *Server) Stop(l *net.TCPListener) {
+	close(s.stopChan)
+	log.Println("wati conn process done....")
+	s.wg.Wait()
+	e :=l.Close()
+	log.Println("lisstener is closed....", e)
+	log.Println("server is stopped....")
+}
+
+func CheckError(str string, err error) {
+	if err != nil {
+		log.Println("Error, ", str, ", ", err)
+		panic(err)
+	}
 }
