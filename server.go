@@ -4,7 +4,6 @@ import (
 	"sync"
 	"log"
 	"net"
-	"fmt"
 )
 
 type ServerConfig struct {
