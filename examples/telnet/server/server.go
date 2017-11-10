@@ -46,7 +46,7 @@ func main() {
 	fmt.Println("Signal: ", <-chSig)
 
 	// stops service
-	srv.Stop()
+	srv.Stop(listener)
 }
 
 func checkError(err error) {

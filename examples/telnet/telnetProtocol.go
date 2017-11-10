@@ -19,7 +19,7 @@ type TelnetPacket struct {
 	pData []byte
 }
 
-func (p *TelnetPacket) Serialize() []byte {
+func (p *TelnetPacket) Pack() []byte {
 	buf := p.pData
 	buf = append(buf, endTag...)
 	return buf
