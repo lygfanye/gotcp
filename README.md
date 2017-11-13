@@ -22,7 +22,7 @@ go get github.com/lygfanye/gotcp
 
 TODO
 =========
-[] Add Test
-[] Optimize heart beating
+-[] Add Test
+-[] Optimize heart beating
 
 
