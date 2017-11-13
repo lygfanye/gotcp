@@ -205,8 +205,11 @@ func (c *Conn) checkHeart() {
 		case <-tick.C:
 			diff := time.Now().Unix() - c.GetHeartBeat()
 			if diff > c.srv.config.HeartBeatingThreshold {
+				log.Println(c.rawConn.RemoteAddr(), " timeout close")
 				c.Close()
 				return
+			}else {
+				log.Println(c.rawConn.RemoteAddr(), " expired at ", c.heart ,time.Unix(c.heart + c.srv.config.HeartBeatingThreshold, 0).Format("2006-01-02 15:04:05"))
 			}
 		}
 	}
