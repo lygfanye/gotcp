@@ -20,4 +20,9 @@ go get github.com/lygfanye/gotcp
 * [echo](https://github.com/lygfanye/gotcp/tree/master/examples/echo)
 * [telnet](https://github.com/lygfanye/gotcp/tree/master/examples/telnet)
 
+TODO
+=========
+[] Add Test
+[] Optimize heart beating
+
 
